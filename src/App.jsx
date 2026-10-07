@@ -66,7 +66,7 @@ export default function App() {
     { name: 'Boxer', size: 'Közepes testű' },
     { name: 'Whippet', size: 'Közepes testű' },
     { name: 'Ausztral juhászkutya (Aussie)', size: 'Közepes testű' },
-    { name: 'Border collie', size: 'Közepes testű' },
+    { name: 'Border collie', size: 'Nagy testű' },
     { name: 'Közép uszkár', size: 'Közepes testű' },
     { name: 'Schnauzer (Közép)', size: 'Közepes testű' },
     { name: 'Corgi (Pembroke / Cardigan)', size: 'Közepes testű' },
