@@ -1,3 +1,20 @@
+import { initializeApp } from "firebase/app";
+import { getDatabase, ref, push, onValue } from "firebase/database";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyANOY9x0WYfrlu_mHGI2lgaKutj3QFtONc",
+  authDomain: "mancsmuhely-kutyakozmetika.firebaseapp.com",
+  databaseURL: "https://mancsmuhely-kutyakozmetika-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "mancsmuhely-kutyakozmetika",
+  storageBucket: "mancsmuhely-kutyakozmetika.firebasestorage.app",
+  messagingSenderId: "282055899441",
+  appId: "1:282055899441:web:6676bea8bedf8e8f881810",
+  measurementId: "G-1BH3ZWBL9S"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
 import React, { useState, useEffect } from 'react';
 
 export default function App() {
@@ -38,11 +55,21 @@ export default function App() {
   const [currentWeekOffset, setCurrentWeekOffset] = useState(0); // Heti nézet lapozáshoz
 
   useEffect(() => {
-    const globalBookings = localStorage.getItem('mancs_all_bookings');
-    if (globalBookings) {
-      setAllBookings(JSON.parse(globalBookings));
-    }
+    const appointmentsRef = ref(db, 'appointments');
+    onValue(appointmentsRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const list = Object.keys(data).map(key => ({
+          id: key,
+          ...data[key]
+        }));
+        setAllBookings(list);
+      } else {
+        setAllBookings([]);
+      }
+    });
   }, []);
+
 
   const commonBreeds = [
     { name: 'Keverék - kis testű', size: 'Kis testű' },
@@ -353,12 +380,15 @@ export default function App() {
       createdAt: new Date().toLocaleDateString('hu-HU')
     };
 
-    const updatedBookings = [newBooking, ...bookings];
-    setBookings(updatedBookings);
+    try {
+      const appointmentsRef = ref(db, 'appointments');
+      await push(appointmentsRef, newBooking);
+    } catch (error) {
+      console.error("Hiba a mentés során: ", error);
+      alert('Nem sikerült elmenteni az adatbázisba a foglalást.');
+      return;
+    }
 
-    const updatedAllBookings = [newBooking, ...allBookings];
-    setAllBookings(updatedAllBookings);
-    localStorage.setItem('mancs_all_bookings', JSON.stringify(updatedAllBookings));
 
     if (user && user.type === 'phone') {
       localStorage.setItem(`mancs_bookings_${user.identifier}`, JSON.stringify(updatedBookings));
