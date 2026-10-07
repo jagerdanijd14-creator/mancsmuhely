@@ -788,15 +788,32 @@ export default function App() {
             <div style={{ marginTop: '15px' }}>
               <label>
                 Dátum:
-                <input 
-                  type="date" 
-                  value={selectedDate}
-                  onChange={(e) => {
-                    setSelectedDate(e.target.value);
-                    setSelectedTime('');
-                  }}
-                  style={{ width: '100%', padding: '10px', marginTop: '5px', borderRadius: '6px', border: '1px solid #CCC', boxSizing: 'border-box', backgroundColor: 'white', color: '#4A3B32' }}
-                />
+<input
+  type="date"
+  value={selectedDate}
+  onChange={(e) => {
+    setSelectedDate(e.target.value);
+    setSelectedTime('');
+  }}
+  onClick={(e) => {
+    // Biztos ami biztos, ha támogatja a böngésző, megpróbálja megnyitni
+    if (typeof e.target.showPicker === 'function') {
+      e.target.showPicker();
+    }
+  }}
+  style={{
+    width: '100%',
+    padding: '12px',
+    borderRadius: '8px',
+    border: '1px solid #8C7A70',
+    backgroundColor: 'white',
+    color: '#4A3B32',
+    fontSize: '16px',
+    outline: 'none',
+    cursor: 'pointer'
+  }}
+/>
+
               </label>
 
               <p style={{ marginTop: '15px', marginBottom: '8px' }}>
