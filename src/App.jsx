@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, addDoc, onSnapshot, updateDoc, doc, deleteDoc } from "firebase/firestore";
+import { getFirestore, collection, addDoc, onSnapshot, updateDoc, doc, deleteDoc, query, where, getDocs } from "firebase/firestore";
 import React, { useState, useEffect } from 'react';
 
 const firebaseConfig = {
@@ -46,6 +46,7 @@ export default function App() {
   const [adminViewMode, setAdminViewMode] = useState('list');
   const [currentWeekOffset, setCurrentWeekOffset] = useState(0);
 
+  // Valós idejű figyelés az összes foglalásra (adminhoz és ütközésvizsgálathoz)
   useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, 'appointments'), (snapshot) => {
       const list = snapshot.docs.map(doc => ({
@@ -56,6 +57,33 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Ha a felhasználó bejelentkezett telefonszámmal, letöltjük a kutyusait és a foglalásait a Firestore-ból
+  useEffect(() => {
+    if (user && user.type === 'phone') {
+      const phone = user.identifier;
+
+      // Kutyusok lekérése Firestore-ból ehhez a telefonszámhoz
+      const qDogs = query(collection(db, 'dogs'), where('ownerPhone', '==', phone));
+      getDocs(qDogs).then((snapshot) => {
+        const loadedDogs = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setDogs(loadedDogs);
+      });
+
+      // Gazdi saját foglalásainak lekérése Firestore-ból
+      const qBookings = query(collection(db, 'appointments'), where('ownerPhone', '==', phone));
+      getDocs(qBookings).then((snapshot) => {
+        const loadedBookings = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setBookings(loadedBookings);
+      });
+    }
+  }, [user]);
 
   const commonBreeds = [
     { name: 'Keverék - kis testű', size: 'Kis testű' },
@@ -137,24 +165,14 @@ export default function App() {
     }
 
     setUser({ type: 'phone', identifier: phoneInput });
-
-    const savedDogs = localStorage.getItem(`mancs_dogs_${phoneInput}`);
-    if (savedDogs) setDogs(JSON.parse(savedDogs));
-    else setDogs([]);
-
-    const savedOwner = localStorage.getItem(`mancs_owner_${phoneInput}`);
-    if (savedOwner) {
-      setOwnerInfo(JSON.parse(savedOwner));
-    } else {
-      setOwnerInfo({ name: '', phone: phoneInput, email: '' });
-    }
-
+    setOwnerInfo({ name: '', phone: phoneInput, email: '' });
     setStep(1);
   };
 
   const handleGuestLogin = () => {
     setUser({ type: 'guest', identifier: 'Vendég (Nincs mentés)' });
     setDogs([]);
+    setBookings([]);
     setOwnerInfo({ name: '', phone: '', email: '' });
     setStep(1);
   };
@@ -176,6 +194,7 @@ export default function App() {
     setSelectedTime('');
     setOwnerInfo({ name: '', phone: '', email: '' });
     setIsEditingProfile(false);
+    setBookings([]);
     setAdminDateFilter('');
     setAdminViewMode('list');
     setCurrentWeekOffset(0);
@@ -190,23 +209,13 @@ export default function App() {
     }
   };
 
-  const saveDogsToStorage = (updatedDogs) => {
-    setDogs(updatedDogs);
-    if (user && user.type === 'phone') {
-      localStorage.setItem(`mancs_dogs_${user.identifier}`, JSON.stringify(updatedDogs));
-    }
-  };
-
   const handleSaveOwnerProfile = (e) => {
     e.preventDefault();
-    if (user && user.type === 'phone') {
-      localStorage.setItem(`mancs_owner_${user.identifier}`, JSON.stringify(ownerInfo));
-    }
     setIsEditingProfile(false);
-    alert('Profil adatok sikeresen elmentve!');
+    alert('Profil adatok rögzítve a foglaláshoz!');
   };
 
-  const handleSaveDogSubmit = (e) => {
+  const handleSaveDogSubmit = async (e) => {
     e.preventDefault();
     if (!newDogData.name || !newDogData.breed) return;
 
@@ -216,30 +225,45 @@ export default function App() {
       return;
     }
 
-    let updatedDogs;
-    if (editingDogId !== null) {
-      updatedDogs = dogs.map(dog => 
-        dog.id === editingDogId 
-          ? { ...dog, name: newDogData.name, breed: matchedBreedObj.name, size: matchedBreedObj.size } 
-          : dog
-      );
-    } else {
-      const newDog = {
-        id: Date.now(),
-        name: newDogData.name,
-        type: 'Kutya',
-        breed: matchedBreedObj.name,
-        size: matchedBreedObj.size
-      };
-      updatedDogs = [...dogs, newDog];
-      setSelectedDog(newDog);
-    }
+    try {
+      if (editingDogId !== null) {
+        // Módosítás a Firestore-ban
+        const dogRef = doc(db, 'dogs', editingDogId);
+        await updateDoc(dogRef, {
+          name: newDogData.name,
+          breed: matchedBreedObj.name,
+          size: matchedBreedObj.size
+        });
 
-    saveDogsToStorage(updatedDogs);
-    setShowNewDogForm(false);
-    setEditingDogId(null);
-    setNewDogData({ name: '', breed: '' });
-    setBreedSearch('');
+        setDogs(dogs.map(dog => 
+          dog.id === editingDogId 
+            ? { ...dog, name: newDogData.name, breed: matchedBreedObj.name, size: matchedBreedObj.size } 
+            : dog
+        ));
+      } else {
+        // Új kutyus mentése a Firestore 'dogs' kollekciójába
+        const newDogPayload = {
+          ownerPhone: user.identifier,
+          name: newDogData.name,
+          type: 'Kutya',
+          breed: matchedBreedObj.name,
+          size: matchedBreedObj.size
+        };
+        const docRef = await addDoc(collection(db, 'dogs'), newDogPayload);
+        const savedDog = { id: docRef.id, ...newDogPayload };
+
+        setDogs([...dogs, savedDog]);
+        setSelectedDog(savedDog);
+      }
+
+      setShowNewDogForm(false);
+      setEditingDogId(null);
+      setNewDogData({ name: '', breed: '' });
+      setBreedSearch('');
+    } catch (error) {
+      console.error("Hiba a kutyus mentésekor: ", error);
+      alert('Nem sikerült elmenteni a kutyust az adatbázisba.');
+    }
   };
 
   const handleStartEdit = (e, dog) => {
@@ -250,13 +274,31 @@ export default function App() {
     setShowNewDogForm(true);
   };
 
-  const handleDeleteDog = (e, dogId) => {
+  const handleDeleteDog = async (e, dogId) => {
     e.stopPropagation();
     if (window.confirm('Biztosan törölni szeretnéd ezt a kutyust?')) {
-      const updatedDogs = dogs.filter(dog => dog.id !== dogId);
-      saveDogsToStorage(updatedDogs);
-      if (selectedDog?.id === dogId) {
-        setSelectedDog(null);
+      try {
+        await deleteDoc(doc(db, 'dogs', dogId));
+        setDogs(dogs.filter(dog => dog.id !== dogId));
+        if (selectedDog?.id === dogId) {
+          setSelectedDog(null);
+        }
+      } catch (error) {
+        console.error("Hiba a törléskor: ", error);
+        alert('Nem sikerült törölni a kutyust.');
+      }
+    }
+  };
+
+  const handleCancelBooking = async (bookingId) => {
+    if (window.confirm('Biztosan le szeretnéd mondani ezt az időpontot?')) {
+      try {
+        await deleteDoc(doc(db, 'appointments', bookingId));
+        setBookings(bookings.filter(b => b.id !== bookingId));
+        alert('Időpont sikeresen lemondva.');
+      } catch (error) {
+        console.error("Hiba a lemondáskor: ", error);
+        alert('Nem sikerült lemondani az időpontot.');
       }
     }
   };
@@ -265,11 +307,9 @@ export default function App() {
     try {
       const docRef = doc(db, 'appointments', bookingId);
       if (newStatus === 'Elutasítva') {
-        // Ha elutasítjuk, töröljük az adatbázisból, így az időpont felszabadul
         await deleteDoc(docRef);
         alert('A foglalás elutasítva és törölve lett.');
       } else {
-        // Egyébként frissítjük a státuszát (pl. Elfogadva)
         await updateDoc(docRef, { status: newStatus });
         alert(`A foglalás státusza frissítve: ${newStatus}`);
       }
@@ -297,8 +337,8 @@ export default function App() {
     }
 
     const newBooking = {
+      ownerPhone: user ? user.identifier : ownerInfo.phone,
       ownerName: ownerInfo.name,
-      ownerPhone: ownerInfo.phone,
       ownerEmail: ownerInfo.email,
       dogName: selectedDog?.name,
       dogBreed: selectedDog?.breed,
@@ -311,7 +351,8 @@ export default function App() {
     };
 
     try {
-      await addDoc(collection(db, 'appointments'), newBooking);
+      const docRef = await addDoc(collection(db, 'appointments'), newBooking);
+      setBookings([...bookings, { id: docRef.id, ...newBooking }]);
       setStep(5);
     } catch (error) {
       console.error("Hiba a mentés során: ", error);
@@ -380,6 +421,22 @@ export default function App() {
               <span style={{ fontSize: '12px', color: '#D8B4B8', fontWeight: 'bold' }}>
                 {user.type === 'phone' ? `Profil: ${user.identifier}` : 'Mód: Vendég'}
               </span>
+              {user.type === 'phone' && (
+                <>
+                  <button 
+                    onClick={() => { setIsEditingProfile(true); setStep(1); }}
+                    style={{ fontSize: '11px', background: '#FAF6F2', border: '1px solid #E5D9D2', padding: '3px 8px', borderRadius: '4px', cursor: 'pointer', color: '#4A3B32' }}
+                  >
+                    👤 Profil szerkesztése
+                  </button>
+                  <button 
+                    onClick={() => setStep(6)}
+                    style={{ fontSize: '11px', background: '#FAF6F2', border: '1px solid #E5D9D2', padding: '3px 8px', borderRadius: '4px', cursor: 'pointer', color: '#4A3B32' }}
+                  >
+                    📅 Foglalásaim ({bookings.length})
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -476,7 +533,7 @@ export default function App() {
                 />
               </label>
               <button type="submit" style={{ padding: '12px', background: '#4A3B32', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' }}>
-                Profil mentése
+                Mentés
               </button>
             </form>
           </div>
@@ -489,16 +546,8 @@ export default function App() {
               <div>
                 <span style={{ fontSize: '12px', background: '#E5D9D2', padding: '4px 8px', borderRadius: '6px', fontWeight: 'bold' }}>1 / 4 lépés</span>
                 <h2 style={{ marginTop: '10px', marginBottom: '5px' }}>Melyik kisállatoddal jössz?</h2>
-                <p style={{ color: '#776B63', fontSize: '13px' }}>Válaszd ki a kutyusodat, vagy kezeld a profilodat:</p>
+                <p style={{ color: '#776B63', fontSize: '13px' }}>Válaszd ki a kutyusodat, vagy add hozzá az újat:</p>
               </div>
-              {user?.type === 'phone' && (
-                <button 
-                  onClick={() => setIsEditingProfile(true)}
-                  style={{ fontSize: '12px', background: '#FAF6F2', border: '1px solid #E5D9D2', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', color: '#4A3B32', height: 'fit-content' }}
-                >
-                  ✏️ Adatok szerkesztése
-                </button>
-              )}
             </div>
 
             {!showNewDogForm ? (
@@ -804,12 +853,60 @@ export default function App() {
             </p>
             <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '20px' }}>
               <button 
+                onClick={() => setStep(6)}
+                style={{ padding: '10px 20px', background: '#E5D9D2', color: '#4A3B32', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                📅 Foglalásaim megtekintése
+              </button>
+              <button 
                 onClick={() => { setStep(1); setSelectedService(null); setSelectedDate(''); setSelectedTime(''); }}
                 style={{ padding: '10px 20px', background: '#4A3B32', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}
               >
                 Új foglalás indítása
               </button>
             </div>
+          </div>
+        )}
+
+        {/* 6. Lépés: Foglalásaim nézet */}
+        {step === 6 && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ margin: 0 }}>📅 Elmentett foglalásaim</h2>
+              <button onClick={() => setStep(1)} style={{ background: '#E5D9D2', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>Vissza</button>
+            </div>
+
+            {bookings.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px', background: '#FAF6F2', borderRadius: '12px' }}>
+                <p style={{ color: '#776B63', fontSize: '14px', margin: '0 0 15px 0' }}>Még nincsenek aktív foglalásaid.</p>
+                <button onClick={() => setStep(1)} style={{ padding: '10px 20px', background: '#4A3B32', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>Foglalás most</button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '400px', overflowY: 'auto' }}>
+                {bookings.map((b) => (
+                  <div key={b.id} style={{ background: '#FAF6F2', padding: '15px', borderRadius: '10px', border: '1px solid #E5D9D2', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ display: 'flex', gap: '10px', fontWeight: 'bold', marginBottom: '5px', alignItems: 'center' }}>
+                        <span>🐶 {b.dogName} ({b.dogBreed})</span>
+                        <span style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '4px', backgroundColor: b.status === 'Elfogadva' ? '#D4EDDA' : (b.status === 'Elutasítva' ? '#F8D7DA' : '#FFF3CD'), color: b.status === 'Elfogadva' ? '#155724' : (b.status === 'Elutasítva' ? '#721C24' : '#856404') }}>
+                          {b.status || 'Függőben'}
+                        </span>
+                      </div>
+                      <p style={{ margin: '3px 0', fontSize: '13px', color: '#4A3B32' }}><b>Szolgáltatás:</b> {b.serviceName} ({b.servicePrice})</p>
+                      <p style={{ margin: '3px 0', fontSize: '13px', color: '#776B63' }}>🕒 Időpont: <b>{b.date} - {b.time}</b></p>
+                    </div>
+                    <div>
+                      <button 
+                        onClick={() => handleCancelBooking(b.id)}
+                        style={{ backgroundColor: '#F8D7DA', color: '#721C24', border: 'none', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', whiteSpace: 'nowrap' }}
+                      >
+                        ❌ Lemondás
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
