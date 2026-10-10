@@ -1,4 +1,19 @@
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, addDoc, onSnapshot } from "firebase/firestore";
 import React, { useState, useEffect } from 'react';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAh9zQEmnlwOgCNzjcxEi5W-d3FXnUTc2g",
+  authDomain: "mancsmuhely-kozmetika.firebaseapp.com",
+  projectId: "mancsmuhely-kozmetika",
+  storageBucket: "mancsmuhely-kozmetika.firebasestorage.app",
+  messagingSenderId: "41370891292",
+  appId: "1:41370891292:web:cdeaad1e7f2f5d62eb9bd9",
+  measurementId: "G-VCFSBHGSV5"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 
 export default function App() {
   const [step, setStep] = useState(0); 
@@ -7,16 +22,13 @@ export default function App() {
   const [phoneError, setPhoneError] = useState('');
   const [showPhoneInput, setShowPhoneInput] = useState(false);
   
-  // Kutyák listája a profilon belül
   const [dogs, setDogs] = useState([]);
   const [selectedDog, setSelectedDog] = useState(null);
   
-  // Új kutyus vagy szerkesztés állapota
   const [showNewDogForm, setShowNewDogForm] = useState(false);
   const [editingDogId, setEditingDogId] = useState(null);
   const [newDogData, setNewDogData] = useState({ name: '', breed: '' });
 
-  // Kutya fajta kereséshez és szűréshez
   const [breedSearch, setBreedSearch] = useState('');
   const [isBreedDropdownOpen, setIsBreedDropdownOpen] = useState(false);
 
@@ -24,25 +36,25 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedTime, setSelectedTime] = useState('');
   
-  // Gazdi adatai (profilhoz is mentve)
   const [ownerInfo, setOwnerInfo] = useState({ name: '', phone: '', email: '' });
   const [isEditingProfile, setIsEditingProfile] = useState(false);
 
-  // Elmentett foglalások listája
   const [bookings, setBookings] = useState([]);
   const [allBookings, setAllBookings] = useState([]);
 
-  // Admin szűrők és nézetek
   const [adminDateFilter, setAdminDateFilter] = useState('');
-  const [adminViewMode, setAdminViewMode] = useState('list'); // 'list' vagy 'week'
-  const [currentWeekOffset, setCurrentWeekOffset] = useState(0); // Heti nézet lapozáshoz
+  const [adminViewMode, setAdminViewMode] = useState('list');
+  const [currentWeekOffset, setCurrentWeekOffset] = useState(0);
 
-  // Kezdeti adatok betöltése LocalStorage-ból
   useEffect(() => {
-    const savedAll = localStorage.getItem('mancs_all_bookings');
-    if (savedAll) {
-      setAllBookings(JSON.parse(savedAll));
-    }
+    const unsubscribe = onSnapshot(collection(db, 'appointments'), (snapshot) => {
+      const list = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setAllBookings(list);
+    });
+    return () => unsubscribe();
   }, []);
 
   const commonBreeds = [
@@ -263,41 +275,7 @@ export default function App() {
       if (user && user.type === 'phone') {
         localStorage.setItem(`mancs_bookings_${user.identifier}`, JSON.stringify(updatedBookings));
       }
-
-      const updatedAllBookings = allBookings.filter(b => b.id !== bookingId);
-      setAllBookings(updatedAllBookings);
-      localStorage.setItem('mancs_all_bookings', JSON.stringify(updatedAllBookings));
     }
-  };
-
-  const handleAdminUpdateStatus = (bookingId, newStatus) => {
-    const updatedAll = allBookings.map(b => {
-      if (b.id === bookingId) {
-        return { ...b, status: newStatus };
-      }
-      return b;
-    });
-
-    let finalAllBookings = updatedAll;
-    if (newStatus === 'Elutasítva') {
-      finalAllBookings = updatedAll.filter(b => b.id !== bookingId);
-    }
-
-    setAllBookings(finalAllBookings);
-    localStorage.setItem('mancs_all_bookings', JSON.stringify(finalAllBookings));
-
-    const updatedUserBookings = bookings.map(b => {
-      if (b.id === bookingId) {
-        return { ...b, status: newStatus };
-      }
-      return b;
-    });
-    
-    const finalUserBookings = newStatus === 'Elutasítva' 
-      ? bookings.filter(b => b.id !== bookingId) 
-      : updatedUserBookings;
-
-    setBookings(finalUserBookings);
   };
 
   const filteredBreeds = commonBreeds.filter(b => 
@@ -308,7 +286,7 @@ export default function App() {
     return allBookings.some(b => b.date === date && b.time === time && b.status !== 'Elutasítva');
   };
 
-  const handleBookingSubmit = (e) => {
+  const handleBookingSubmit = async (e) => {
     e.preventDefault();
 
     if (isTimeSlotBooked(selectedDate, selectedTime)) {
@@ -318,7 +296,6 @@ export default function App() {
     }
 
     const newBooking = {
-      id: Date.now(),
       ownerName: ownerInfo.name,
       ownerPhone: ownerInfo.phone,
       ownerEmail: ownerInfo.email,
@@ -332,19 +309,22 @@ export default function App() {
       createdAt: new Date().toLocaleDateString('hu-HU')
     };
 
-    const updatedAll = [...allBookings, newBooking];
-    setAllBookings(updatedAll);
-    localStorage.setItem('mancs_all_bookings', JSON.stringify(updatedAll));
+    try {
+      await addDoc(collection(db, 'appointments'), newBooking);
 
-    const updatedBookings = [...bookings, newBooking];
-    setBookings(updatedBookings);
+      const updatedBookings = [...bookings, { id: Date.now(), ...newBooking }];
+      setBookings(updatedBookings);
 
-    if (user && user.type === 'phone') {
-      localStorage.setItem(`mancs_bookings_${user.identifier}`, JSON.stringify(updatedBookings));
-      localStorage.setItem(`mancs_owner_${user.identifier}`, JSON.stringify(ownerInfo));
+      if (user && user.type === 'phone') {
+        localStorage.setItem(`mancs_bookings_${user.identifier}`, JSON.stringify(updatedBookings));
+        localStorage.setItem(`mancs_owner_${user.identifier}`, JSON.stringify(ownerInfo));
+      }
+
+      setStep(5);
+    } catch (error) {
+      console.error("Hiba a mentés során: ", error);
+      alert('Nem sikerült elmenteni a foglalást a Firestore-ba.');
     }
-
-    setStep(5);
   };
 
   const getWeekDates = (offset) => {
@@ -1006,23 +986,6 @@ export default function App() {
                             <p style={{ margin: 0 }}>🐶 <b>Kutyus:</b> {b.dogName} ({b.dogBreed})</p>
                             <p style={{ margin: 0 }}>✂ <b>Csomag:</b> {b.serviceName} ({b.servicePrice})</p>
                           </div>
-
-                          <div style={{ display: 'flex', gap: '10px', marginTop: '10px', borderTop: '1px solid #E5D9D2', paddingTop: '10px' }}>
-                            {b.status !== 'Elfogadva' && (
-                              <button 
-                                onClick={() => handleAdminUpdateStatus(b.id, 'Elfogadva')}
-                                style={{ flex: 1, backgroundColor: '#D4EDDA', color: '#155724', border: 'none', padding: '8px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
-                              >
-                                ✅ Elfogad
-                              </button>
-                            )}
-                            <button 
-                              onClick={() => handleAdminUpdateStatus(b.id, 'Elutasítva')}
-                              style={{ flex: 1, backgroundColor: '#F8D7DA', color: '#721C24', border: 'none', padding: '8px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
-                            >
-                              ❌ Elutasít (Felszabadít)
-                            </button>
-                          </div>
                         </div>
                       ))}
                     </div>
@@ -1079,22 +1042,6 @@ export default function App() {
                                     </span>
                                   </div>
                                   <p style={{ margin: 0, fontSize: '12px', color: '#776B63' }}>Gazdi: <b>{b.ownerName}</b> ({b.ownerPhone}) | Csomag: {b.serviceName}</p>
-                                </div>
-                                <div style={{ display: 'flex', gap: '5px' }}>
-                                  {b.status !== 'Elfogadva' && (
-                                    <button 
-                                      onClick={() => handleAdminUpdateStatus(b.id, 'Elfogadva')}
-                                      style={{ backgroundColor: '#D4EDDA', color: '#155724', border: 'none', padding: '5px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
-                                    >
-                                      ✔
-                                    </button>
-                                  )}
-                                  <button 
-                                    onClick={() => handleAdminUpdateStatus(b.id, 'Elutasítva')}
-                                    style={{ backgroundColor: '#F8D7DA', color: '#721C24', border: 'none', padding: '5px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
-                                  >
-                                    ✕
-                                  </button>
                                 </div>
                               </div>
                             ))}
