@@ -37,7 +37,7 @@ export default function App() {
   const [adminViewMode, setAdminViewMode] = useState('list'); // 'list' vagy 'week'
   const [currentWeekOffset, setCurrentWeekOffset] = useState(0); // Heti nézet lapozáshoz
 
-  // Kezdeti adatok betöltése LocalStorage-ból (Firebase helyett)
+  // Kezdeti adatok betöltése LocalStorage-ból
   useEffect(() => {
     const savedAll = localStorage.getItem('mancs_all_bookings');
     if (savedAll) {
@@ -753,6 +753,7 @@ export default function App() {
                     outline: 'none',
                     cursor: 'pointer'
                   }}
+                  aria-label="Válassz dátumot"
                 />
               </label>
 
@@ -956,6 +957,7 @@ export default function App() {
                         }
                       }}
                       style={{ width: '100%', padding: '8px', marginTop: '4px', borderRadius: '6px', border: '1px solid #CCC', backgroundColor: 'white', color: '#4A3B32', cursor: 'pointer' }}
+                      aria-label="Válassz dátumot"
                     />
                   </label>
                   {adminDateFilter && (
