@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, addDoc, onSnapshot } from "firebase/firestore";
+import { getFirestore, collection, addDoc, onSnapshot, updateDoc, doc, deleteDoc } from "firebase/firestore";
 import React, { useState, useEffect } from 'react';
 
 const firebaseConfig = {
@@ -149,17 +149,12 @@ export default function App() {
       setOwnerInfo({ name: '', phone: phoneInput, email: '' });
     }
 
-    const savedBookings = localStorage.getItem(`mancs_bookings_${phoneInput}`);
-    if (savedBookings) setBookings(JSON.parse(savedBookings));
-    else setBookings([]);
-
     setStep(1);
   };
 
   const handleGuestLogin = () => {
     setUser({ type: 'guest', identifier: 'Vendég (Nincs mentés)' });
     setDogs([]);
-    setBookings([]);
     setOwnerInfo({ name: '', phone: '', email: '' });
     setStep(1);
   };
@@ -181,7 +176,6 @@ export default function App() {
     setSelectedTime('');
     setOwnerInfo({ name: '', phone: '', email: '' });
     setIsEditingProfile(false);
-    setBookings([]);
     setAdminDateFilter('');
     setAdminViewMode('list');
     setCurrentWeekOffset(0);
@@ -267,14 +261,21 @@ export default function App() {
     }
   };
 
-  const handleCancelBooking = (bookingId) => {
-    if (window.confirm('Biztosan le szeretnéd mondani ezt az időpontot? Az idősáv azonnal újra felszabadul.')) {
-      const updatedBookings = bookings.filter(b => b.id !== bookingId);
-      setBookings(updatedBookings);
-
-      if (user && user.type === 'phone') {
-        localStorage.setItem(`mancs_bookings_${user.identifier}`, JSON.stringify(updatedBookings));
+  const handleAdminUpdateStatus = async (bookingId, newStatus) => {
+    try {
+      const docRef = doc(db, 'appointments', bookingId);
+      if (newStatus === 'Elutasítva') {
+        // Ha elutasítjuk, töröljük az adatbázisból, így az időpont felszabadul
+        await deleteDoc(docRef);
+        alert('A foglalás elutasítva és törölve lett.');
+      } else {
+        // Egyébként frissítjük a státuszát (pl. Elfogadva)
+        await updateDoc(docRef, { status: newStatus });
+        alert(`A foglalás státusza frissítve: ${newStatus}`);
       }
+    } catch (error) {
+      console.error("Hiba a státusz frissítésekor: ", error);
+      alert('Nem sikerült módosítani a foglalást.');
     }
   };
 
@@ -311,15 +312,6 @@ export default function App() {
 
     try {
       await addDoc(collection(db, 'appointments'), newBooking);
-
-      const updatedBookings = [...bookings, { id: Date.now(), ...newBooking }];
-      setBookings(updatedBookings);
-
-      if (user && user.type === 'phone') {
-        localStorage.setItem(`mancs_bookings_${user.identifier}`, JSON.stringify(updatedBookings));
-        localStorage.setItem(`mancs_owner_${user.identifier}`, JSON.stringify(ownerInfo));
-      }
-
       setStep(5);
     } catch (error) {
       console.error("Hiba a mentés során: ", error);
@@ -388,22 +380,6 @@ export default function App() {
               <span style={{ fontSize: '12px', color: '#D8B4B8', fontWeight: 'bold' }}>
                 {user.type === 'phone' ? `Profil: ${user.identifier}` : 'Mód: Vendég'}
               </span>
-              {user.type === 'phone' && (
-                <>
-                  <button 
-                    onClick={() => { setIsEditingProfile(true); setStep(1); }}
-                    style={{ fontSize: '11px', background: '#FAF6F2', border: '1px solid #E5D9D2', padding: '3px 8px', borderRadius: '4px', cursor: 'pointer', color: '#4A3B32' }}
-                  >
-                    👤 Profil szerkesztése
-                  </button>
-                  <button 
-                    onClick={() => setStep(6)}
-                    style={{ fontSize: '11px', background: '#FAF6F2', border: '1px solid #E5D9D2', padding: '3px 8px', borderRadius: '4px', cursor: 'pointer', color: '#4A3B32' }}
-                  >
-                    📅 Foglalásaim ({bookings.length})
-                  </button>
-                </>
-              )}
             </div>
           )}
         </div>
@@ -828,70 +804,12 @@ export default function App() {
             </p>
             <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '20px' }}>
               <button 
-                onClick={() => setStep(6)}
-                style={{ padding: '10px 20px', background: '#E5D9D2', color: '#4A3B32', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}
-              >
-                📅 Foglalásaim megtekintése
-              </button>
-              <button 
                 onClick={() => { setStep(1); setSelectedService(null); setSelectedDate(''); setSelectedTime(''); }}
                 style={{ padding: '10px 20px', background: '#4A3B32', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}
               >
                 Új foglalás indítása
               </button>
             </div>
-          </div>
-        )}
-
-        {/* 6. Lépés: Foglalásaim / Időpontjaim lista nézet */}
-        {step === 6 && (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ margin: 0 }}>📅 Elmentett foglalásaim</h2>
-              <button onClick={() => setStep(1)} style={{ background: '#E5D9D2', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>Vissza</button>
-            </div>
-
-            {(() => {
-              let currentBookings = bookings;
-              if (user && user.type === 'phone') {
-                const saved = localStorage.getItem(`mancs_bookings_${user.identifier}`);
-                if (saved) {
-                  currentBookings = JSON.parse(saved);
-                }
-              }
-
-              return currentBookings.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '30px', background: '#FAF6F2', borderRadius: '12px' }}>
-                  <p style={{ color: '#776B63', fontSize: '14px', margin: '0 0 15px 0' }}>Még nincsenek aktív vagy múltbeli foglalásaid.</p>
-                  <button onClick={() => setStep(1)} style={{ padding: '10px 20px', background: '#4A3B32', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>Foglalás most</button>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '400px', overflowY: 'auto' }}>
-                  {currentBookings.map((b) => (
-                    <div key={b.id} style={{ background: '#FAF6F2', padding: '15px', borderRadius: '10px', border: '1px solid #E5D9D2', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ display: 'flex', gap: '10px', fontWeight: 'bold', marginBottom: '5px', alignItems: 'center' }}>
-                          <span>🐶 {b.dogName} ({b.dogBreed})</span>
-                          <span style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '4px', backgroundColor: b.status === 'Elfogadva' ? '#D4EDDA' : (b.status === 'Elutasítva' ? '#F8D7DA' : '#FFF3CD'), color: b.status === 'Elfogadva' ? '#155724' : (b.status === 'Elutasítva' ? '#721C24' : '#856404') }}>
-                            {b.status || 'Függőben'}
-                          </span>
-                        </div>
-                        <p style={{ margin: '3px 0', fontSize: '13px', color: '#4A3B32' }}><b>Szolgáltatás:</b> {b.serviceName} ({b.servicePrice})</p>
-                        <p style={{ margin: '3px 0', fontSize: '13px', color: '#776B63' }}>🕒 Időpont: <b>{b.date} - {b.time}</b></p>
-                      </div>
-                      <div>
-                        <button 
-                          onClick={() => handleCancelBooking(b.id)}
-                          style={{ backgroundColor: '#F8D7DA', color: '#721C24', border: 'none', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', whiteSpace: 'nowrap' }}
-                        >
-                          ❌ Lemondás
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              );
-            })()}
           </div>
         )}
 
@@ -986,6 +904,23 @@ export default function App() {
                             <p style={{ margin: 0 }}>🐶 <b>Kutyus:</b> {b.dogName} ({b.dogBreed})</p>
                             <p style={{ margin: 0 }}>✂ <b>Csomag:</b> {b.serviceName} ({b.servicePrice})</p>
                           </div>
+
+                          <div style={{ display: 'flex', gap: '10px', marginTop: '10px', borderTop: '1px solid #E5D9D2', paddingTop: '10px' }}>
+                            {b.status !== 'Elfogadva' && (
+                              <button 
+                                onClick={() => handleAdminUpdateStatus(b.id, 'Elfogadva')}
+                                style={{ flex: 1, backgroundColor: '#D4EDDA', color: '#155724', border: 'none', padding: '8px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
+                              >
+                                ✅ Elfogad
+                              </button>
+                            )}
+                            <button 
+                              onClick={() => handleAdminUpdateStatus(b.id, 'Elutasítva')}
+                              style={{ flex: 1, backgroundColor: '#F8D7DA', color: '#721C24', border: 'none', padding: '8px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
+                            >
+                              ❌ Elutasít (Felszabadít)
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1042,6 +977,22 @@ export default function App() {
                                     </span>
                                   </div>
                                   <p style={{ margin: 0, fontSize: '12px', color: '#776B63' }}>Gazdi: <b>{b.ownerName}</b> ({b.ownerPhone}) | Csomag: {b.serviceName}</p>
+                                </div>
+                                <div style={{ display: 'flex', gap: '5px' }}>
+                                  {b.status !== 'Elfogadva' && (
+                                    <button 
+                                      onClick={() => handleAdminUpdateStatus(b.id, 'Elfogadva')}
+                                      style={{ backgroundColor: '#D4EDDA', color: '#155724', border: 'none', padding: '5px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
+                                    >
+                                      ✔
+                                    </button>
+                                  )}
+                                  <button 
+                                    onClick={() => handleAdminUpdateStatus(b.id, 'Elutasítva')}
+                                    style={{ backgroundColor: '#F8D7DA', color: '#721C24', border: 'none', padding: '5px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
+                                  >
+                                    ✕
+                                  </button>
                                 </div>
                               </div>
                             ))}
