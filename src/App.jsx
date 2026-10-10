@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, addDoc, onSnapshot, updateDoc, doc, deleteDoc, query, where, getDocs } from "firebase/firestore";
+import { getFirestore, collection, addDoc, onSnapshot, updateDoc, doc, deleteDoc, query, where, getDocs, setDoc, getDoc } from "firebase/firestore";
 import React, { useState, useEffect } from 'react';
 
 const firebaseConfig = {
@@ -46,7 +46,7 @@ export default function App() {
   const [adminViewMode, setAdminViewMode] = useState('list');
   const [currentWeekOffset, setCurrentWeekOffset] = useState(0);
 
-  // Valós idejű figyelés az összes foglalásra (adminhoz és ütközésvizsgálathoz)
+  // Valós idejű figyelés az összes foglalásra
   useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, 'appointments'), (snapshot) => {
       const list = snapshot.docs.map(doc => ({
@@ -58,12 +58,22 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Ha a felhasználó bejelentkezett telefonszámmal, letöltjük a kutyusait és a foglalásait a Firestore-ból
+  // Bejelentkezés után letöltjük a profiladatokat, kutyusokat és foglalásokat a Firestore-ból
   useEffect(() => {
     if (user && user.type === 'phone') {
       const phone = user.identifier;
 
-      // Kutyusok lekérése Firestore-ból ehhez a telefonszámhoz
+      // 1. Gazdi profil lekérése (dokumentum azonosító a telefonszám, szóközk nélkül vagy tisztítva)
+      const ownerDocId = phone.replace(/\s+/g, '');
+      getDoc(doc(db, 'owners', ownerDocId)).then((docSnap) => {
+        if (docSnap.exists()) {
+          setOwnerInfo(docSnap.data());
+        } else {
+          setOwnerInfo({ name: '', phone: phone, email: '' });
+        }
+      });
+
+      // 2. Kutyusok lekérése
       const qDogs = query(collection(db, 'dogs'), where('ownerPhone', '==', phone));
       getDocs(qDogs).then((snapshot) => {
         const loadedDogs = snapshot.docs.map(doc => ({
@@ -73,7 +83,7 @@ export default function App() {
         setDogs(loadedDogs);
       });
 
-      // Gazdi saját foglalásainak lekérése Firestore-ból
+      // 3. Foglalások lekérése
       const qBookings = query(collection(db, 'appointments'), where('ownerPhone', '==', phone));
       getDocs(qBookings).then((snapshot) => {
         const loadedBookings = snapshot.docs.map(doc => ({
@@ -165,7 +175,6 @@ export default function App() {
     }
 
     setUser({ type: 'phone', identifier: phoneInput });
-    setOwnerInfo({ name: '', phone: phoneInput, email: '' });
     setStep(1);
   };
 
@@ -209,10 +218,24 @@ export default function App() {
     }
   };
 
-  const handleSaveOwnerProfile = (e) => {
+  // Profil mentése a Firestore 'owners' kollekciójába
+  const handleSaveOwnerProfile = async (e) => {
     e.preventDefault();
-    setIsEditingProfile(false);
-    alert('Profil adatok rögzítve a foglaláshoz!');
+    if (user && user.type === 'phone') {
+      try {
+        const ownerDocId = user.identifier.replace(/\s+/g, '');
+        await setDoc(doc(db, 'owners', ownerDocId), {
+          name: ownerInfo.name,
+          phone: ownerInfo.phone,
+          email: ownerInfo.email
+        });
+        setIsEditingProfile(false);
+        alert('Profil adatok sikeresen elmentve a felhőbe!');
+      } catch (error) {
+        console.error("Hiba a profil mentésekor: ", error);
+        alert('Nem sikerült elmenteni a profiladatokat.');
+      }
+    }
   };
 
   const handleSaveDogSubmit = async (e) => {
@@ -227,7 +250,6 @@ export default function App() {
 
     try {
       if (editingDogId !== null) {
-        // Módosítás a Firestore-ban
         const dogRef = doc(db, 'dogs', editingDogId);
         await updateDoc(dogRef, {
           name: newDogData.name,
@@ -241,7 +263,6 @@ export default function App() {
             : dog
         ));
       } else {
-        // Új kutyus mentése a Firestore 'dogs' kollekciójába
         const newDogPayload = {
           ownerPhone: user.identifier,
           name: newDogData.name,
@@ -533,7 +554,7 @@ export default function App() {
                 />
               </label>
               <button type="submit" style={{ padding: '12px', background: '#4A3B32', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' }}>
-                Mentés
+                Profil mentése a felhőbe
               </button>
             </form>
           </div>
